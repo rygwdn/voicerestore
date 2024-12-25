@@ -130,10 +130,10 @@ model("test_input.wav", "test_output.wav")
 If you use VoiceRestore in your research, please cite our paper:
 
 ```
-@article{kirdey2024voicerestore,
+@misc{kirdey2024voicerestore,
   title={VoiceRestore: Flow-Matching Transformers for Speech Recording Quality Restoration},
   author={Kirdey, Stanislav},
-  journal={arXiv},
+  howpublished={\url{https://github.com/skirdey/voicerestore}},
   year={2024}
 }
 ```
