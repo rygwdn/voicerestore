@@ -10,14 +10,14 @@ class OptimizedAudioRestorationModel(torch.nn.Module):
         # Initialize VoiceRestore
         self.voice_restore = VoiceRestore(
             sigma=0.0, 
-            transformer={
-                'dim': 768, 
-                'depth': 20, 
-                'heads': 16, 
-                'dim_head': 64,
-                'skip_connect_type': 'concat', 
-                'max_seq_len': 2000,
-            }, 
+            transformer=dict(
+                dim=768,
+                depth=20,
+                heads=16,
+                dim_head=64,
+                skip_connect_type="concat",
+                max_seq_len=1024,
+            ),
             num_channels=100
         )  
         
