@@ -38,10 +38,7 @@ def load_model(save_path):
 
 
 def restore_audio(model, input_path, output_path, steps=16, cfg_strength=0.5):  
-    audio, sr = torchaudio.load(input_path)
-
-    if sr != model.target_sample_rate:
-        audio = torchaudio.functional.resample(audio, sr, model.target_sample_rate)
+    audio = torchaudio.load(input_path)
 
     audio = audio.mean(dim=0, keepdim=True) if audio.dim() > 1 else audio  # Convert to mono if stereo
     

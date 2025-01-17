@@ -11,7 +11,6 @@ nw - raw wave length
 d - dimension
 """
 
-
 from __future__ import annotations
 from typing import Dict, Any, Optional
 from functools import partial
@@ -43,6 +42,7 @@ class AdaLNZero(Module):
         nn.init.constant_(self.to_gamma.bias, init_bias_value)
 
     def forward(self, x: torch.Tensor, *, condition: torch.Tensor) -> torch.Tensor:
+        # condition shape: (b, d) or (b, 1, d)
         if condition.ndim == 2:
             condition = rearrange(condition, 'b d -> b 1 d')
         gamma = self.to_gamma(condition).sigmoid()
@@ -113,8 +113,14 @@ class Transformer(Module):
             skip_proj = Linear(dim * 2, dim, bias=False) if needs_skip_proj and is_later_half else None
 
             self.layers.append(ModuleList([
-                gateloop, skip_proj, attn_norm, attn, attn_adaln_zero,
-                ff_norm, ff, ff_adaln_zero
+                gateloop, 
+                skip_proj, 
+                attn_norm, 
+                attn, 
+                attn_adaln_zero,
+                ff_norm, 
+                ff, 
+                ff_adaln_zero
             ]))
 
         self.final_norm = RMSNorm(dim)
@@ -123,56 +129,94 @@ class Transformer(Module):
         self,
         x: Float['b n d'],
         times: Optional[Float['b'] | Float['']] = None,
+        mask: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
-        batch, seq_len, device = *x.shape[:2], x.device
-
-        assert not (exists(times) ^ self.cond_on_time), '`times` must be passed in if `cond_on_time` is set to `True` and vice versa'
+        """
+        Args:
+            x: (b, n, d)
+            times: (b,) or scalar if cond_on_time is True
+            mask: (b, n) boolean or 0/1 mask for attention
+        """
+        b, n, device = x.shape[0], x.shape[1], x.device
+        assert not (exists(times) ^ self.cond_on_time), (
+            "`times` must be passed in if `cond_on_time` is set to `True`, and vice versa."
+        )
 
         norm_kwargs = {}
 
+        # Absolute positional embedding
         if exists(self.abs_pos_emb):
-            # assert seq_len <= self.max_seq_len, f'{seq_len} exceeds the set `max_seq_len` ({self.max_seq_len}) on Transformer'
-            seq = torch.arange(seq_len, device=device)
-            x = x + self.abs_pos_emb(seq)
+            # you may want to guard for n <= self.max_seq_len
+            pos_indices = torch.arange(n, device=device)
+            x = x + self.abs_pos_emb(pos_indices)
 
+        # Time conditioning
         if exists(times):
             if times.ndim == 0:
-                times = repeat(times, ' -> b', b=batch)
-            times = self.time_cond_mlp(times)
+                times = repeat(times, ' -> b', b=b)
+            times = self.time_cond_mlp(times)  # (b, d) or (b, 1, d)
             norm_kwargs['condition'] = times
 
-        registers = repeat(self.registers, 'r d -> b r d', b=batch)
+        # Concat registers to the sequence
+        registers = repeat(self.registers, 'r d -> b r d', b=b)
         x, registers_packed_shape = pack((registers, x), 'b * d')
 
+        # Build the rotary embeddings for this sequence length
         rotary_pos_emb = self.rotary_emb.forward_from_seq_len(x.shape[-2])
 
+        # Similarly extend the mask to registers + real tokens if given
+        if mask is not None:
+            # mask: (b, n), we have total length = r + n after packing
+            # The first `r` (num_registers) are never "masked" out
+            # so we build a new mask of shape (b, r + n)
+            reg_mask = x.new_ones(b, self.num_registers, dtype=mask.dtype)
+            mask = torch.cat([reg_mask, mask], dim=1)  # (b, r + n)
+
+        # We'll keep track of skip connections
         skips = []
 
         for ind, (
-            gateloop, maybe_skip_proj, attn_norm, attn, maybe_attn_adaln_zero,
-            ff_norm, ff, maybe_ff_adaln_zero
+            gateloop, 
+            maybe_skip_proj, 
+            attn_norm, 
+            attn, 
+            maybe_attn_adaln_zero,
+            ff_norm, 
+            ff, 
+            maybe_ff_adaln_zero
         ) in enumerate(self.layers):
-            layer = ind + 1
-            is_first_half = layer <= (self.depth // 2)
 
+            layer_idx = ind + 1
+            is_first_half = (layer_idx <= (self.depth // 2))
+
+            # If in the first half, push x onto skip stack
             if is_first_half:
                 skips.append(x)
             else:
+                # Retrieve matching skip
                 skip = skips.pop()
                 if self.skip_connect_type == 'concat':
                     x = torch.cat((x, skip), dim=-1)
                     x = maybe_skip_proj(x)
 
+            # GateLoop
             x = gateloop(x) + x
 
-            attn_out = attn(attn_norm(x, **norm_kwargs), rotary_pos_emb=rotary_pos_emb)
+            # Attention
+            attn_out = attn(
+                attn_norm(x, **norm_kwargs),
+                rotary_pos_emb=rotary_pos_emb,
+                mask=mask  # pass mask here
+            )
             x = x + maybe_attn_adaln_zero(attn_out, **norm_kwargs)
 
+            # Feed-forward
             ff_out = ff(ff_norm(x, **norm_kwargs))
             x = x + maybe_ff_adaln_zero(ff_out, **norm_kwargs)
 
-        assert len(skips) == 0
+        assert len(skips) == 0, "Skip-connection stack not empty at the end!"
 
+        # Unpack back
         _, x = unpack(x, registers_packed_shape, 'b * d')
 
         return self.final_norm(x)
@@ -189,49 +233,86 @@ class VoiceRestore(nn.Module):
         self.sigma = sigma
         self.num_channels = num_channels
 
+        # For simplicity, always cond_on_time = True in transformer config
         self.transformer = Transformer(**transformer, cond_on_time=True)
 
+        # Default ODE integration settings
         self.odeint_kwargs = odeint_kwargs or {'atol': 1e-5, 'rtol': 1e-5, 'method': 'midpoint'}
 
         self.proj_in = nn.Linear(num_channels, self.transformer.dim)
         self.cond_proj = nn.Linear(num_channels, self.transformer.dim)
         self.to_pred = nn.Linear(self.transformer.dim, num_channels)
 
-    def transformer_with_pred_head(self, x: torch.Tensor, times: torch.Tensor, cond: Optional[torch.Tensor] = None) -> torch.Tensor:
-        x = self.proj_in(x)
+    def transformer_with_pred_head(
+        self,
+        x: torch.Tensor,
+        times: torch.Tensor,
+        cond: Optional[torch.Tensor] = None,
+        mask: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        """
+        Projects input x, optionally adds condition, feeds through Transformer, 
+        and returns final prediction in dimension of num_channels.
+        """
+        x = self.proj_in(x)  # (b, n, dim)
         if cond is not None:
             cond_proj = self.cond_proj(cond)
-            x = x + cond_proj
-        attended = self.transformer(x, times=times)
-        return self.to_pred(attended)
+            x = x + cond_proj  # broadcast if shapes match suitably
+
+        attended = self.transformer(x, times=times, mask=mask)
+        return self.to_pred(attended)  # (b, n, num_channels)
 
     def cfg_transformer_with_pred_head(
         self,
-        *args,
-        cond=None,
-        mask=None,
-        cfg_strength: float = 0.5,
-        **kwargs,
+        x: torch.Tensor,
+        times: torch.Tensor,
+        cond: Optional[torch.Tensor] = None,
+        mask: Optional[torch.Tensor] = None,
+        cfg_strength: float = 0.5
     ):
-        pred = self.transformer_with_pred_head(*args, **kwargs, cond=cond)
+        """
+        Classifier-free guidance variant of the transformer forward.
+        If cfg_strength <= 0, effectively the normal forward pass.
+        """
+        pred = self.transformer_with_pred_head(x, times=times, cond=cond, mask=mask)
 
         if cfg_strength < 1e-5:
-            return pred * mask.unsqueeze(-1) if mask is not None else pred
-    
-        null_pred = self.transformer_with_pred_head(*args, **kwargs, cond=None)
-        
-        result = pred + (pred - null_pred) * cfg_strength
-        return result * mask.unsqueeze(-1) if mask is not None else result
+            # no guidance
+            return pred if mask is None else pred * mask.unsqueeze(-1)
 
+        # null (no condition) pass
+        null_pred = self.transformer_with_pred_head(x, times=times, cond=None, mask=mask)
+
+        guided = pred + (pred - null_pred) * cfg_strength
+        return guided if mask is None else guided * mask.unsqueeze(-1)
 
     @torch.no_grad()
-    def sample(self, processed: torch.Tensor, steps: int = 32, cfg_strength: float = 0.5) -> torch.Tensor:
+    def sample(
+        self,
+        processed: torch.Tensor,
+        steps: int = 32,
+        cfg_strength: float = 0.5,
+        mask: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        """
+        Example sampling routine using an ODE solver.  For many text/audio models, 
+        you'll use something else, but this shows how you might incorporate the 
+        same forward pass + mask into an ODE integration.
+        """
         self.eval()
+        # times from 0 -> 1
         times = torch.linspace(0, 1, steps, device=processed.device)
 
-        def ode_fn(t: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
-            return self.cfg_transformer_with_pred_head(x, times=t, cond=processed, cfg_strength=cfg_strength)
+        def ode_fn(t: torch.Tensor, x: torch.Tensor):
+            return self.cfg_transformer_with_pred_head(
+                x,
+                times=t,
+                cond=processed,
+                mask=mask,
+                cfg_strength=cfg_strength
+            )
 
+        # Starting from noise
         y0 = torch.randn_like(processed)
         trajectory = odeint(ode_fn, y0, times, **self.odeint_kwargs)
         restored = trajectory[-1]

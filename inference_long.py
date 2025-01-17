@@ -112,7 +112,7 @@ def restore_audio(model, input_path, output_path, steps=16, cfg_strength=0.5, wi
     start_time = time.time()
 
     initial_gpu_memory = measure_gpu_memory(device)
-    wav, sr = librosa.load(input_path, sr=model.bigvgan_model.h.sampling_rate, mono=True)
+    wav, sr = librosa.load(input_path, mono=True)
     wav = torch.FloatTensor(wav).unsqueeze(0)  # Shape: [1, num_samples]
 
     window_size_samples = int(window_size_sec * sr)

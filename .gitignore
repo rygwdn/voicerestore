@@ -1,4 +1,5 @@
 *.pt
+*.pth
 test_output.wav
 
 # Byte-compiled / optimized / DLL files

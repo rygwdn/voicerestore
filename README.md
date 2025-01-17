@@ -6,6 +6,7 @@ Demo of audio restorations: [VoiceRestore](https://sparkling-rabanadas-3082be.ne
 
 Credits: This repository is based on the [E2-TTS implementation by Lucidrains](https://github.com/lucidrains/e2-tts-pytorch)
 
+
 #### Super easy usage - using Transformers 🤗 by [@jadechoghari](https://github.com/jadechoghari) - Hugging Face
 <a href="https://huggingface.co/jadechoghari/VoiceRestore">
   <img src="https://img.shields.io/badge/%F0%9F%A4%97%20VoiceRestore-blue" alt="VoiceRestore" height="25">
@@ -13,10 +14,10 @@ Credits: This repository is based on the [E2-TTS implementation by Lucidrains](h
 
 #### Build it locally on gradio in this [repo.](https://github.com/jadechoghari/VoiceRestore-demo)
 
-#### Try the Model here:
-<a href="https://huggingface.co/spaces/jadechoghari/VoiceRestore">
-  <img src="https://img.shields.io/badge/%F0%9F%A4%97%20VoiceRestore-orange" alt="VoiceRestore" height="25">
-</a>
+## Latest Releases
+
+* **01/16/2025** - [Version 1.1 of the checkpoint that improves restoration.](https://drive.google.com/drive/folders/1uBJNp4mrPJQY9WEaiTI9u09IsRg1lAPR?usp=sharing)
+* **09/07/2024** - Version 0.1 of the model inference and checkpoint.
 
 ## Example
 ### Degraded Input: 
@@ -73,15 +74,15 @@ https://github.com/user-attachments/assets/fdbbb988-9bd2-4750-bddd-32bd5153d254
 
 4. Run a test restoration:
    ```bash
-   python inference_short.py --checkpoint ./checkpoints/voice-restore-20d-16h-optim.pt --input test_input.wav --output test_output.wav --steps 32 --cfg_strength 0.5
+    python inference_short.py --checkpoint ./checkpoints/voicerestore-1.1.pth --input test_input.wav --output test_output.wav --steps 32 --cfg_strength 0.5
    ```
    This will process `test_input.wav` and save the result as `test_output.wav`.
 
 5. Run a long form restoration, it uses window chunking:
    ```bash
-   python inference_long.py --checkpoint ./checkpoints/voice-restore-20d-16h-optim.pt --input test_input_long.wav --output test_output_long.wav --steps 32 --cfg_strength 0.5 --window_size_sec 10.0 --overlap 0.25
+   python inference_long.py --checkpoint ./checkpoints/voicerestore-1.1.pth --input long_audio_file.mp3 --output test_output_long.wav --steps 8 --cfg_strength 0.5 --window_size_sec 10.0 --overlap 0.3
    ```
-   This will process `test_input_long.wav` (you need to provide it) and save the result as `test_output_long.wav`.
+   This will save the result as `test_output_long.wav`.
 
 ## Usage
 
@@ -130,11 +131,14 @@ model("test_input.wav", "test_output.wav")
 If you use VoiceRestore in your research, please cite our paper:
 
 ```
-@misc{kirdey2024voicerestore,
-  title={VoiceRestore: Flow-Matching Transformers for Speech Recording Quality Restoration},
-  author={Kirdey, Stanislav},
-  howpublished={\url{https://github.com/skirdey/voicerestore}},
-  year={2024}
+@misc{kirdey2025voicerestoreflowmatchingtransformersspeech,
+      title={VoiceRestore: Flow-Matching Transformers for Speech Recording Quality Restoration}, 
+      author={Stanislav Kirdey},
+      year={2025},
+      eprint={2501.00794},
+      archivePrefix={arXiv},
+      primaryClass={eess.AS},
+      url={https://arxiv.org/abs/2501.00794}, 
 }
 ```
 
