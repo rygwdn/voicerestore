@@ -12,7 +12,7 @@ class OptimizedAudioRestorationModel(torch.nn.Module):
             sigma=0.0, 
             transformer=dict(
                 dim=768,
-                depth=24,
+                depth=20,
                 heads=16,
                 dim_head=64,
                 skip_connect_type="concat",
