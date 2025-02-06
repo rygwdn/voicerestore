@@ -107,12 +107,12 @@ def load_model(save_path, device, decoder):
     return optimized_model
 
 
-def restore_audio(model, input_path, output_path, steps=16, cfg_strength=0.5, window_size_sec=5.0, overlap=0.5, batch_size=16, decoder='bigvgan'):  
+def restore_audio(model, input_path, output_path, steps=16, cfg_strength=0.1, window_size_sec=5.0, overlap=0.1, batch_size=32, decoder='bigvgan'):  
     # Load the audio file
     start_time = time.time()
 
     initial_gpu_memory = measure_gpu_memory(device)
-    wav, sr = librosa.load(input_path, mono=True)
+    wav, sr = librosa.load(input_path, sr=model.bigvgan_model.h.sampling_rate)
     wav = torch.FloatTensor(wav).unsqueeze(0)  # Shape: [1, num_samples]
 
     window_size_samples = int(window_size_sec * sr)
@@ -162,7 +162,7 @@ def restore_audio(model, input_path, output_path, steps=16, cfg_strength=0.5, wi
         restored_wav = restored_wav.unsqueeze(0)  # Shape: [1, num_samples]
 
     # Save the restored audio
-    torchaudio.save(output_path, restored_wav, model.bigvgan_model.h.sampling_rate)
+    torchaudio.save(output_path, restored_wav, sr)
 
     end_time = time.time()
     total_time = end_time - start_time
