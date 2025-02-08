@@ -1,7 +1,9 @@
 import sys
 import time
+import math
 from types import SimpleNamespace
 import torch
+import torch.nn.functional as F
 import torchaudio
 import argparse
 from tqdm import tqdm
@@ -26,33 +28,38 @@ def measure_gpu_memory(device):
 
 def apply_overlap_windowing_waveform(waveform, window_size_samples, overlap):
     step_size = int(window_size_samples * (1 - overlap))
-    num_chunks = (waveform.shape[-1] - window_size_samples) // step_size + 1
+    total_samples = waveform.shape[-1]
+    # Use ceil to ensure the final segment is included even if it’s shorter.
+    num_windows = math.ceil((total_samples - window_size_samples) / step_size) + 1
     windows = []
 
-    for i in range(num_chunks):
+    for i in range(num_windows):
         start_idx = i * step_size
         end_idx = start_idx + window_size_samples
-        chunk = waveform[..., start_idx:end_idx]
+        if end_idx > total_samples:
+            # Pad the last window to maintain consistent window size.
+            pad_amount = end_idx - total_samples
+            chunk = F.pad(waveform[..., start_idx:], (0, pad_amount))
+        else:
+            chunk = waveform[..., start_idx:end_idx]
         windows.append(chunk)
     
     return torch.stack(windows)
 
 
-def reconstruct_waveform_from_windows(windows, window_size_samples, overlap):
+def reconstruct_waveform_from_windows(windows, window_size_samples, overlap, original_length=None):
     step_size = int(window_size_samples * (1 - overlap))
     shape = windows.shape
     if len(shape) == 2:
-        # windows.shape == (num_windows, window_len)
         num_windows, window_len = shape
         channels = 1
-        windows = windows.unsqueeze(1)  # Now windows.shape == (num_windows, 1, window_len)
+        windows = windows.unsqueeze(1)
     elif len(shape) == 3:
         num_windows, channels, window_len = shape
     else:
         raise ValueError(f"Unexpected windows.shape: {windows.shape}")
 
     output_length = (num_windows - 1) * step_size + window_size_samples
-
     reconstructed = torch.zeros((channels, output_length))
     window_sums = torch.zeros((channels, output_length))
 
@@ -61,11 +68,14 @@ def reconstruct_waveform_from_windows(windows, window_size_samples, overlap):
         end_idx = start_idx + window_len
         reconstructed[:, start_idx:end_idx] += windows[i]
         window_sums[:, start_idx:end_idx] += 1
-    
+
     reconstructed = reconstructed / window_sums.clamp(min=1e-6)
+    if original_length is not None:
+        reconstructed = reconstructed[:, :original_length]
     if channels == 1:
-        reconstructed = reconstructed.squeeze(0)  # Remove channel dimension if single channel
+        reconstructed = reconstructed.squeeze(0)
     return reconstructed
+
 
 
 def load_bigvgan_model(device):
@@ -112,7 +122,7 @@ def restore_audio(model, input_path, output_path, steps=16, cfg_strength=0.1, wi
     start_time = time.time()
 
     initial_gpu_memory = measure_gpu_memory(device)
-    wav, sr = librosa.load(input_path, sr=model.bigvgan_model.h.sampling_rate)
+    wav, sr = librosa.load(input_path, mono=True, sr=model.bigvgan_model.h.sampling_rate)
     wav = torch.FloatTensor(wav).unsqueeze(0)  # Shape: [1, num_samples]
 
     window_size_samples = int(window_size_sec * sr)
@@ -155,14 +165,14 @@ def restore_audio(model, input_path, output_path, steps=16, cfg_strength=0.1, wi
     restored_wav_windows = torch.cat(restored_wav_windows, dim=0)  # Shape: [num_windows, num_samples]
 
     # Reconstruct the full waveform from the processed windows
-    restored_wav = reconstruct_waveform_from_windows(restored_wav_windows, window_size_samples, overlap)
+    restored_wav = reconstruct_waveform_from_windows(restored_wav_windows, window_size_samples, overlap, original_length=wav.shape[-1])
 
     # Ensure the restored_wav has correct dimensions for saving
     if restored_wav.dim() == 1:
         restored_wav = restored_wav.unsqueeze(0)  # Shape: [1, num_samples]
 
     # Save the restored audio
-    torchaudio.save(output_path, restored_wav, sr)
+    torchaudio.save(output_path, restored_wav, model.bigvgan_model.h.sampling_rate)
 
     end_time = time.time()
     total_time = end_time - start_time
