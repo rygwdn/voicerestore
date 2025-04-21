@@ -95,13 +95,6 @@ model = OptimizedAudioRestorationModel()
 restored_audio = model.forward(input_audio, steps=32, cfg_strength=0.5)
 ```
 
-## Alternative Usage - using Transformers 🤗
-``` bash
-!git lfs install
-!git clone https://huggingface.co/jadechoghari/VoiceRestore
-%cd VoiceRestore
-!pip install -r requirements.txt
-```
 
 ``` python
 from transformers import AutoModel
@@ -110,8 +103,6 @@ checkpoint_path = "/content/VoiceRestore"
 model = AutoModel.from_pretrained(checkpoint_path, trust_remote_code=True)
 model("test_input.wav", "test_output.wav")
 ```
-
-
 
 ## Model Details
 
